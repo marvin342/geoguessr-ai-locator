@@ -3,59 +3,68 @@ import torch
 from PIL import Image
 from geoclip import GeoCLIP
 import folium
-from streamlit_folium import folium_static  # Changed this line
+from streamlit_folium import folium_static
+import tempfile
+import os
 
-# 1. Page Configuration
-st.set_page_config(page_title="AI GeoGuessr Solver", layout="wide")
+# 1. Page Config
+st.set_page_config(page_title="GeoGuessr AI", layout="wide")
 
+# 2. Model Loader (Cached)
 @st.cache_resource
 def load_model():
-    # Load the GeoCLIP model
     return GeoCLIP()
 
-st.title("🌍 AI GeoGuessr Location Detector")
+st.title("🌍 Professional GeoGuessr AI")
+st.write("Detecting locations using world-scale Vision Transformers.")
 
-# 2. Loading State
-try:
-    with st.spinner("Loading AI Brain..."):
-        model = load_model()
-except Exception as e:
-    st.error(f"Model Error: {e}")
+# Load Model
+with st.spinner("Downloading AI weights (this may take a moment)..."):
+    model = load_model()
 
-# 3. Sidebar
+# 3. Sidebar for Upload
 with st.sidebar:
-    st.header("Upload Image")
-    uploaded_file = st.file_uploader("Screenshot from Google Street View", type=['jpg', 'jpeg', 'png'])
+    st.header("Upload Screenshot")
+    uploaded_file = st.file_uploader("Street View image", type=['jpg', 'jpeg', 'png'])
+    st.info("The AI analyzes architecture, vegetation, and road markings.")
 
-# 4. Main App Logic
+# 4. Processing Logic
 if uploaded_file is not None:
     col1, col2 = st.columns([1, 1])
-    input_image = Image.open(uploaded_file).convert("RGB")
+    
+    # Open and show the image
+    img = Image.open(uploaded_file).convert("RGB")
     
     with col1:
         st.subheader("Your Image")
-        st.image(input_image, use_column_width=True)
+        st.image(img, use_column_width=True)
         
     with col2:
-        st.subheader("AI Prediction")
-        with st.spinner("Analyzing coordinates..."):
-            # Get predictions
-            top_k_preds, top_k_probs = model.predict(input_image, top_k=1)
+        st.subheader("AI Guess")
+        with st.spinner("Processing clues..."):
+            # SAVE TO TEMP FILE (Essential for GeoCLIP API)
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+                img.save(tmp.name)
+                tmp_path = tmp.name
             
-            # Extract Latitude and Longitude
-            best_guess = top_k_preds[0]
-            lat, lon = float(best_guess[0]), float(best_guess[1])
-            
-            st.success(f"Best Guess: {lat:.4f}, {lon:.4f}")
-            
-            # Create the map
-            m = folium.Map(location=[lat, lon], zoom_start=4)
-            folium.Marker([lat, lon], popup="AI Guess").add_to(m)
-            
-            # Use folium_static for stability (Fixes MarshallComponentException)
-            folium_static(m, width=600, height=450)
+            try:
+                # Run prediction
+                top_k_preds, top_k_probs = model.predict(tmp_path, top_k=1)
+                lat, lon = float(top_k_preds[0][0]), float(top_k_preds[0][1])
+                
+                st.success(f"Coordinate Match: {lat:.4f}, {lon:.4f}")
+                
+                # Render the map
+                m = folium.Map(location=[lat, lon], zoom_start=5)
+                folium.Marker([lat, lon], popup="AI Guess", icon=folium.Icon(color='red')).add_to(m)
+                folium_static(m, width=650, height=450)
+                
+            finally:
+                # Cleanup temp file
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
 else:
-    st.info("Upload an image in the sidebar to begin.")
-    # Show a static empty map
-    m_empty = folium.Map(location=[20, 0], zoom_start=2)
-    folium_static(m_empty, width=600, height=450)
+    st.info("Please upload an image to begin.")
+    # Show default map
+    m_default = folium.Map(location=[20, 0], zoom_start=2)
+    folium_static(m_default, width=650, height=450)
