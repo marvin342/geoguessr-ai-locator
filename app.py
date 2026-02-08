@@ -13,13 +13,16 @@ st.set_page_config(page_title="GeoGuessr AI", layout="wide")
 # 2. Model Loader (Cached)
 @st.cache_resource
 def load_model():
-    return GeoCLIP()
+    # Force CPU mode for stability on Streamlit's shared servers
+    model = GeoCLIP()
+    model.to("cpu") 
+    return model
 
 st.title("🌍 Professional GeoGuessr AI")
 st.write("Detecting locations using world-scale Vision Transformers.")
 
 # Load Model
-with st.spinner("Downloading AI weights (this may take a moment)..."):
+with st.spinner("Downloading AI weights... (Wait for balloons 🎈)"):
     model = load_model()
 
 # 3. Sidebar for Upload
@@ -41,16 +44,20 @@ if uploaded_file is not None:
         
     with col2:
         st.subheader("AI Guess")
-        with st.spinner("Processing clues..."):
+        with st.spinner("Analyzing pixels for geographic clues..."):
             # SAVE TO TEMP FILE (Essential for GeoCLIP API)
             with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
                 img.save(tmp.name)
                 tmp_path = tmp.name
             
             try:
-                # Run prediction
-                top_k_preds, top_k_probs = model.predict(tmp_path, top_k=1)
-                lat, lon = float(top_k_preds[0][0]), float(top_k_preds[0][1])
+                # FIX: Use torch.no_grad() to save memory and prevent 'F.linear' weight update errors
+                with torch.no_grad():
+                    top_k_preds, top_k_probs = model.predict(tmp_path, top_k=1)
+                
+                # FIX: Explicitly cast to float to prevent TypeError in Folium/JSON Marshalling
+                lat = float(top_k_preds[0][0])
+                lon = float(top_k_preds[0][1])
                 
                 st.success(f"Coordinate Match: {lat:.4f}, {lon:.4f}")
                 
@@ -59,12 +66,15 @@ if uploaded_file is not None:
                 folium.Marker([lat, lon], popup="AI Guess", icon=folium.Icon(color='red')).add_to(m)
                 folium_static(m, width=650, height=450)
                 
+            except Exception as e:
+                st.error(f"Prediction Error: {str(e)}")
+                st.warning("If this persists, go to Settings -> Advanced -> Python Version and select 3.11")
+                
             finally:
                 # Cleanup temp file
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
 else:
     st.info("Please upload an image to begin.")
-    # Show default map
     m_default = folium.Map(location=[20, 0], zoom_start=2)
     folium_static(m_default, width=650, height=450)
