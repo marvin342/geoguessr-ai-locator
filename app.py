@@ -8,62 +8,62 @@ import tempfile
 import os
 import gc
 
-st.set_page_config(page_title="GeoGuessr AI", layout="wide")
+# 1. Page Config - Keep it simple
+st.set_page_config(page_title="AI Locator", layout="centered")
 
 @st.cache_resource
 def load_model():
-    # Force the model to load in half-precision (float16) to save RAM
+    # Force everything to CPU and set to evaluation mode
     model = GeoCLIP()
     model.to("cpu")
     model.eval()
     return model
 
-st.title("🌍 Professional GeoGuessr AI")
+st.title("🌍 GeoGuessr AI (CPU Mode)")
 
-# Memory management: Clear previous runs
+# Clear memory immediately on load
 gc.collect()
 
-with st.spinner("Loading AI Brain (Optimizing Memory)..."):
+# Load the AI
+with st.spinner("Waking up the AI..."):
     try:
         model = load_model()
     except Exception as e:
-        st.error("Server out of memory. Try refreshing.")
+        st.error("Server is too busy. Click 'Reboot' in settings.")
 
-with st.sidebar:
-    st.header("Upload Screenshot")
-    uploaded_file = st.file_uploader("Street View image", type=['jpg', 'jpeg', 'png'])
+# 2. Sidebar Upload
+uploaded_file = st.sidebar.file_uploader("Upload Image", type=['jpg', 'png'])
 
-if uploaded_file is not None:
-    col1, col2 = st.columns([1, 1])
+if uploaded_file:
+    # Open image and resize it to be smaller (saves RAM)
     img = Image.open(uploaded_file).convert("RGB")
+    img.thumbnail((500, 500)) # Shrink the image for the CPU
+    st.image(img, caption="Analyzing this view...")
     
-    with col1:
-        st.image(img, use_column_width=True)
+    with st.spinner("Thinking..."):
+        # Save a small temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+            img.save(tmp.name, quality=40)
+            tmp_path = tmp.name
         
-    with col2:
-        with st.spinner("Analyzing..."):
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-                img.save(tmp.name)
-                tmp_path = tmp.name
+        try:
+            # Inference without gradients to save memory
+            with torch.no_grad():
+                preds, probs = model.predict(tmp_path, top_k=1)
             
-            try:
-                with torch.no_grad():
-                    # Predict using the path string as required by the API
-                    top_k_preds, top_k_probs = model.predict(tmp_path, top_k=1)
-                
-                lat, lon = float(top_k_preds[0][0]), float(top_k_preds[0][1])
-                st.success(f"Match: {lat:.4f}, {lon:.4f}")
-                
-                m = folium.Map(location=[lat, lon], zoom_start=5)
-                folium.Marker([lat, lon]).add_to(m)
-                folium_static(m, width=500, height=400)
-                
-            except Exception as e:
-                st.error(f"Error: {e}")
-            finally:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-                # Clear memory after every guess
-                gc.collect()
+            lat, lon = float(preds[0][0]), float(preds[0][1])
+            st.success(f"AI Guess: {lat:.2f}, {lon:.2f}")
+            
+            # Simple Map
+            m = folium.Map(location=[lat, lon], zoom_start=4)
+            folium.Marker([lat, lon]).add_to(m)
+            folium_static(m)
+            
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            # FORCE memory cleanup
+            del img
+            gc.collect()
 else:
-    st.info("Upload an image to start.")
+    st.info("Upload a street view picture to start.")
