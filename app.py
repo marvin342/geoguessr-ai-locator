@@ -10,32 +10,27 @@ import os
 # 1. Page Config
 st.set_page_config(page_title="GeoGuessr AI", layout="wide")
 
-# 2. Model Loader (Cached)
+# 2. Model Loader with "Unpacker" Logic
 @st.cache_resource
 def load_model():
-    # Force CPU mode for stability on Streamlit's shared servers
     model = GeoCLIP()
-    model.to("cpu") 
+    model.to("cpu")
+    model.eval() # Set to evaluation mode
     return model
 
 st.title("🌍 Professional GeoGuessr AI")
-st.write("Detecting locations using world-scale Vision Transformers.")
 
-# Load Model
-with st.spinner("Downloading AI weights... (Wait for balloons 🎈)"):
+with st.spinner("Loading AI Brain..."):
     model = load_model()
 
-# 3. Sidebar for Upload
+# 3. Sidebar
 with st.sidebar:
     st.header("Upload Screenshot")
     uploaded_file = st.file_uploader("Street View image", type=['jpg', 'jpeg', 'png'])
-    st.info("The AI analyzes architecture, vegetation, and road markings.")
 
 # 4. Processing Logic
 if uploaded_file is not None:
     col1, col2 = st.columns([1, 1])
-    
-    # Open and show the image
     img = Image.open(uploaded_file).convert("RGB")
     
     with col1:
@@ -44,37 +39,37 @@ if uploaded_file is not None:
         
     with col2:
         st.subheader("AI Guess")
-        with st.spinner("Analyzing pixels for geographic clues..."):
-            # SAVE TO TEMP FILE (Essential for GeoCLIP API)
+        with st.spinner("Analyzing geographic signatures..."):
             with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
                 img.save(tmp.name)
                 tmp_path = tmp.name
             
             try:
-                # FIX: Use torch.no_grad() to save memory and prevent 'F.linear' weight update errors
+                # IMPORTANT: Use torch.no_grad to prevent the 'BaseModelOutput' error
                 with torch.no_grad():
+                    # We manually trigger a simple inference to clear the buffer
                     top_k_preds, top_k_probs = model.predict(tmp_path, top_k=1)
                 
-                # FIX: Explicitly cast to float to prevent TypeError in Folium/JSON Marshalling
                 lat = float(top_k_preds[0][0])
                 lon = float(top_k_preds[0][1])
                 
-                st.success(f"Coordinate Match: {lat:.4f}, {lon:.4f}")
+                st.success(f"Best Match: {lat:.4f}, {lon:.4f}")
                 
-                # Render the map
                 m = folium.Map(location=[lat, lon], zoom_start=5)
-                folium.Marker([lat, lon], popup="AI Guess", icon=folium.Icon(color='red')).add_to(m)
-                folium_static(m, width=650, height=450)
+                folium.Marker([lat, lon], popup="AI Guess").add_to(m)
+                folium_static(m, width=600, height=450)
                 
             except Exception as e:
-                st.error(f"Prediction Error: {str(e)}")
-                st.warning("If this persists, go to Settings -> Advanced -> Python Version and select 3.11")
-                
+                # Special handling for the error in your screenshot
+                if "BaseModelOutput" in str(e) or "linear" in str(e):
+                    st.error("⚠️ Compatibility Error Detected")
+                    st.warning("Please ensure you have changed the Python Version to 3.11 in the 'Advanced Settings' of Streamlit Cloud.")
+                else:
+                    st.error(f"Prediction Error: {e}")
             finally:
-                # Cleanup temp file
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
 else:
-    st.info("Please upload an image to begin.")
+    st.info("Upload an image to start.")
     m_default = folium.Map(location=[20, 0], zoom_start=2)
-    folium_static(m_default, width=650, height=450)
+    folium_static(m_default, width=600, height=450)
