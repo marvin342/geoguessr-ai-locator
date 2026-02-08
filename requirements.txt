@@ -5,3 +5,4 @@ folium
 streamlit-folium
 pillow
 transformers==4.30.2
+streamlit>=1.23.0
