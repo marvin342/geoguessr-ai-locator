@@ -1,69 +1,64 @@
 import streamlit as st
-import torch
-from PIL import Image
 from geoclip import GeoCLIP
 import folium
-from streamlit_folium import folium_static
-import tempfile
+from streamlit_folium import st_folium
+import torch
+from PIL import Image
 import os
-import gc
 
-# 1. Page Config - Keep it simple
-st.set_page_config(page_title="AI Locator", layout="centered")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="GeoGuessr AI Locator", layout="centered")
 
+# --- POWERFUL CACHING (The "Fix") ---
+# This tells the server: "Load this model ONCE and keep it in the background."
 @st.cache_resource
 def load_model():
-    # Force everything to CPU and set to evaluation mode
+    # Force CPU mode to save memory
+    device = torch.device('cpu')
     model = GeoCLIP()
-    model.to("cpu")
+    model.to(device)
     model.eval()
     return model
 
-st.title("🌍 GeoGuessr AI (CPU Mode)")
+# --- LOAD DATA ---
+st.title("🌍 GeoGuessr AI Locator")
+st.write("Upload a GeoGuessr screenshot, and the AI will guess the location!")
 
-# Clear memory immediately on load
-gc.collect()
+with st.spinner("Loading AI Model... (This takes a minute on first run)"):
+    model = load_model()
 
-# Load the AI
-with st.spinner("Waking up the AI..."):
-    try:
-        model = load_model()
-    except Exception as e:
-        st.error("Server is too busy. Click 'Reboot' in settings.")
+# --- IMAGE UPLOAD ---
+uploaded_file = st.file_uploader("Choose a screenshot...", type=["jpg", "jpeg", "png"])
 
-# 2. Sidebar Upload
-uploaded_file = st.sidebar.file_uploader("Upload Image", type=['jpg', 'png'])
-
-if uploaded_file:
-    # Open image and resize it to be smaller (saves RAM)
-    img = Image.open(uploaded_file).convert("RGB")
-    img.thumbnail((500, 500)) # Shrink the image for the CPU
-    st.image(img, caption="Analyzing this view...")
+if uploaded_file is not None:
+    # Display the image
+    image = Image.open(uploaded_file)
+    st.image(image, caption='Your Screenshot', use_container_width=True)
     
-    with st.spinner("Thinking..."):
-        # Save a small temp file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-            img.save(tmp.name, quality=40)
-            tmp_path = tmp.name
-        
-        try:
-            # Inference without gradients to save memory
-            with torch.no_grad():
-                preds, probs = model.predict(tmp_path, top_k=1)
-            
-            lat, lon = float(preds[0][0]), float(preds[0][1])
-            st.success(f"AI Guess: {lat:.2f}, {lon:.2f}")
-            
-            # Simple Map
-            m = folium.Map(location=[lat, lon], zoom_start=4)
-            folium.Marker([lat, lon]).add_to(m)
-            folium_static(m)
-            
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-            # FORCE memory cleanup
-            del img
-            gc.collect()
-else:
-    st.info("Upload a street view picture to start.")
+    # Save temporarily to process
+    temp_path = "temp_coords.jpg"
+    image.save(temp_path)
+    
+    if st.button("📍 Predict Location"):
+        with st.spinner("Analyzing landscape and road markings..."):
+            try:
+                # Run the prediction
+                with torch.no_grad():
+                    preds, probs = model.predict(temp_path, top_k=1)
+                
+                lat, lon = float(preds[0][0]), float(preds[0][1])
+                
+                st.success(f"AI Guess: {lat:.2f}, {lon:.2f}")
+                
+                # --- MAP DISPLAY ---
+                m = folium.Map(location=[lat, lon], zoom_start=4)
+                folium.Marker([lat, lon], popup="AI Guess").add_to(m)
+                st_folium(m, width=700, height=450)
+                
+            except Exception as e:
+                st.error(f"Something went wrong: {e}")
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+
+st.info("Note: This AI uses visual cues like foliage, sun position, and infrastructure.")
